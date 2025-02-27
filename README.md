@@ -1,6 +1,6 @@
 # Projects Repository
 
-Welcome to the **Projects** repository, where I share various scripts and tools developed for my scientific research projects. This repository primarily focuses on **transcriptomic analysis**, offering solutions for RNA-Seq, gene expression analysis, mutational profiling, and more.
+Welcome to the **Projects** repository, where I share various scripts and tools developed for my scientific research projects. This repository primarily focuses on **transcriptomic and Genomic analysis**, offering solutions for RNA-Seq, gene expression analysis, mutational profiling, and more.
 
 Here you’ll find a variety of scripts in **Shell**, **R**, **RStudio**, **Python**, and **Perl**, which serve as the backbone for the processing, analysis, and visualization of large-scale transcriptomic/Genomic datasets. 
 
