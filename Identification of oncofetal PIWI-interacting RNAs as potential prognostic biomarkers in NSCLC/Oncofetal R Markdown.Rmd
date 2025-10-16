@@ -1,0 +1,497 @@
+---
+title: "Identification of Oncofetal PIWI-interacting RNAs as Potential Prognostic Biomarkers in Lung Adenocarcinoma"
+author: "Vanessa G. P. Souza"
+Data: "Feb 2025"
+output: html_document
+---
+
+## Introduction
+
+This analysis focuses on identifying oncofetal PIWI-interacting RNAs (piRNAs) as potential prognostic biomarkers in Lung Adenocarcinoma (LUAD) and Lung Squamous Cells (LUSC). This study utilized four cohorts: the TCGA cohort, which included paired tumor and adjacent adult non-neoplastic lung tissue (ANL) samples for lung adenocarcinoma (LUAD) and lung squamous cell carcinoma (LUSC) from The Cancer Genome Atlas (TCGA); a fetal lung (FL) cohort comprising human fetal lung samples; and a validation cohort from the British Columbia Cancer Agency (BCCA) containing LUAD and paired ANL tissue samples.
+
+---
+
+# **LUAD piRNA Analysis**
+
+### Load Libraries
+```{r Load_Libraries, warning=FALSE, message=FALSE}
+library(DT)                      # For creating interactive tables
+library(readxl)                  # For reading Excel files
+library(pheatmap)                # For generating heatmaps
+library(ggplot2)                 # For saving and customizing plots
+library(gridExtra)               # For arranging multiple plots
+library(UpSetR)                  # For upset plot
+```
+
+
+### Load Data
+
+In this section, we load the LUAD data, which contains piRNA expression data across different sample types (ANL and tumor).
+
+```{r}
+TCGA_LUAD_paired_nofetal <- read_excel("TCGA_LUAD_paired_nofetal.xls")
+head(TCGA_LUAD_paired_nofetal)  # Preview the first few rows to confirm data loading
+```
+
+### Filter and Identify piRNAs
+
+The following steps involve filtering piRNAs based on their expression in the tumor and ANL groups and classifying them as either exclusive to the tumor group, exclusive to the ANL group, or shared between both groups. piRNAs were considered 'expressed' if detected at ≥ 1 RPM in at least 10% of samples within each tissue type. piRNAs that did not meet this criterion were classified as 'non-expressed'.
+
+```{r}
+# 1. Define groups
+group_samples_anl <- grep("LUAD_ANL", colnames(TCGA_LUAD_paired_nofetal))  # ANL samples
+group_samples_tumor <- grep("LUAD_Tumor", colnames(TCGA_LUAD_paired_nofetal))  # Tumor samples
+
+# 2. Function to check expression threshold (piRNAs expressed in at least 10% of samples with count >= 1)
+is_expressed <- function(data, threshold_rpm = 1, threshold_percent = 0.1) {
+  expressed_samples <- data >= threshold_rpm
+  expressed_percentage <- sum(expressed_samples) / length(data)
+  return(expressed_percentage >= threshold_percent)
+}
+
+# 3. Apply the function to filter expressed piRNAs in both groups
+expressed_in_anl <- apply(TCGA_LUAD_paired_nofetal[, group_samples_anl], 1, is_expressed)
+expressed_in_tumor <- apply(TCGA_LUAD_paired_nofetal[, group_samples_tumor], 1, is_expressed)
+
+# 4. Get piRNA names
+piRNA_names <- TCGA_LUAD_paired_nofetal$piRNAs
+
+# 5. Classify piRNAs into exclusive and shared groups
+exclusive_in_tumor <- piRNA_names[expressed_in_tumor & !expressed_in_anl]
+exclusive_in_anl <- piRNA_names[expressed_in_anl & !expressed_in_tumor]
+shared_between_groups <- piRNA_names[expressed_in_anl & expressed_in_tumor]
+```
+
+### Tables of piRNAs
+
+We will now create a data frame to display the piRNAs categorized into tumor-exclusive, ANL-exclusive, and shared piRNAs.
+
+```{r}
+# 6. Create a data frame for piRNAs and their group classifications
+piRNA_results <- data.frame(
+  piRNA = c(exclusive_in_tumor, exclusive_in_anl, shared_between_groups),
+  Group = c(rep("Tumor", length(exclusive_in_tumor)),
+            rep("Normal", length(exclusive_in_anl)),
+            rep("Shared", length(shared_between_groups)))
+)
+
+# 7. Display the table interactively within the R Markdown
+datatable(piRNA_results, options = list(pageLength = 10))  # This will display the table
+```
+
+### Heatmap of Tumor-Specific piRNAs
+
+In this step, we generate a heatmap to visualize the expression of tumor-specific piRNAs across the samples. The heatmap will differentiate tumor and ANL samples using color annotations.
+
+```{r}
+# 8. Subset expression data for piRNAs exclusive to tumor
+exclusive_in_tumor_data <- TCGA_LUAD_paired_nofetal[expressed_in_tumor & !expressed_in_anl, -1]
+
+# 9. Define annotation for sample types (ANL and tumor)
+sample_types <- ifelse(grepl("^LUAD_Tumor", colnames(exclusive_in_tumor_data)), "Tumor", "ANL")
+annotation_col <- data.frame(SampleType = factor(sample_types, levels = c("ANL", "Tumor")))
+rownames(annotation_col) <- colnames(exclusive_in_tumor_data)
+annotation_colors <- list(SampleType = c("ANL" = "#1f77b4", "Tumor" = "#66c2a5"))
+
+# 10. Generate and show heatmap in the R Markdown document
+pheatmap(exclusive_in_tumor_data,
+         cluster_rows = F,          # Do not cluster piRNAs
+         cluster_cols = T,          # Cluster samples (tumor vs normal)
+         show_rownames = F,         # Do not display piRNA names
+         show_colnames = F,         # Do not display sample names
+         scale = "row",             # Normalize by row (piRNA)
+         color = colorRampPalette(c("blue", "white", "red"))(10),  # Color gradient from blue to red
+         main = "LUAD Tumor-Specific piRNAs",  # Title
+         annotation_col = annotation_col,  # Add sample type annotation
+         annotation_colors = annotation_colors,  # Color scheme for annotations
+         clustering_distance_cols = "euclidean",  # Euclidean distance for column clustering
+         clustering_method = "ward.D")  # Agglomerative clustering method
+```
+
+### Save Results as Files
+
+Here, we save the results of the filtered piRNAs and their classifications as text files for further analysis.
+
+```{r}
+# 11. Save piRNA classification results to text files
+write.table(exclusive_in_tumor, file = "expressed_in_tumor_LUAD.txt", sep = "	", row.names = FALSE, quote = FALSE)
+write.table(exclusive_in_anl, file = "expressed_in_ANL_LUAD.txt", sep = "	", row.names = FALSE, quote = FALSE)
+write.table(shared_between_groups, file = "shared_piRNAs_LUAD.txt", sep = "	", row.names = FALSE, quote = FALSE)
+```
+
+### Visualize and Save the Heatmap
+
+In this section, the heatmap plot will be saved as a PNG file for publication or presentation purposes.
+
+```{r}
+# 12. Save the heatmap as a PNG file
+ggsave(filename = "heatmap_piRNAs_LUAD.png", plot = last_plot(), dpi = 600, width = 5, height = 4)
+```
+
+---
+
+# **LUSC piRNA Analysis**
+
+In this section, we load the LUSC data, which contains piRNA expression data across different sample types (ANL and tumor).
+
+```{r}
+### Load Data
+TCGA_LUSC_paired_nofetal <- read_excel("TCGA_LUSC_paired_nofetal.xls")
+head(TCGA_LUSC_paired_nofetal)  # Preview the first few rows to confirm data loading
+```
+
+### Filter and Identify piRNAs
+
+The following steps involve filtering piRNAs based on their expression in the tumor and ANL groups and classifying them as either exclusive to the tumor group, exclusive to the ANL group, or shared between both groups. piRNAs were considered 'expressed' if detected at ≥ 1 RPM in at least 10% of samples within each tissue type. piRNAs that did not meet this criterion were classified as 'non-expressed'.
+
+```{r}
+# 1. Define groups
+group_samples_anl <- grep("LUSC_ANL", colnames(TCGA_LUSC_paired_nofetal))
+group_samples_tumor <- grep("LUSC_Tumor", colnames(TCGA_LUSC_paired_nofetal))
+
+# 2. Function to check expression threshold (piRNAs expressed in at least 10% of samples with count >= 1)
+is_expressed <- function(data, threshold_rpm = 1, threshold_percent = 0.1) {
+  expressed_samples <- data >= threshold_rpm
+  expressed_percentage <- sum(expressed_samples) / length(data)
+  return(expressed_percentage >= threshold_percent)
+}
+
+# 3. Apply the function to filter expressed piRNAs in both groups
+expressed_in_anl <- apply(TCGA_LUSC_paired_nofetal[, group_samples_anl], 1, is_expressed)
+expressed_in_tumor <- apply(TCGA_LUSC_paired_nofetal[, group_samples_tumor], 1, is_expressed)
+
+# 4. piRNAs names
+piRNA_names <- TCGA_LUSC_paired_nofetal$piRNAs
+
+# 5. Classify piRNAs into exclusive and shared groups
+exclusive_in_tumor <- piRNA_names[expressed_in_tumor & !expressed_in_anl]
+exclusive_in_anl <- piRNA_names[expressed_in_anl & !expressed_in_tumor]
+shared_between_groups <- piRNA_names[expressed_in_anl & expressed_in_tumor]
+
+expressed_in_tumor_3 <- as.data.frame(piRNA_names[expressed_in_tumor])
+expressed_in_anl_3 <- as.data.frame(piRNA_names[expressed_in_anl])
+```
+
+```{r}
+# 6. Create a data frame for piRNAs and their group classifications
+piRNA_results <- data.frame(
+  piRNA = c(exclusive_in_tumor, exclusive_in_anl, shared_between_groups),
+  Group = c(rep("Tumor", length(exclusive_in_tumor)),
+            rep("Normal", length(exclusive_in_anl)),
+            rep("Shared", length(shared_between_groups)))
+)
+
+# 7. Display the table interactively within the R Markdown
+datatable(piRNA_results, options = list(pageLength = 10))  # This will display the table
+```
+
+### Heatmap of Tumor-Specific piRNAs
+
+In this step, we generate a heatmap to visualize the expression of tumor-specific piRNAs across the samples. The heatmap will differentiate tumor and ANL samples using color annotations.
+
+```{r}
+# 8. Subset expression data for piRNAs exclusive to tumor
+exclusive_in_tumor_data <- TCGA_LUSC_paired_nofetal[expressed_in_tumor & !expressed_in_anl, -1]
+expression_data_heat <- exclusive_in_tumor_data[, -1]  # Assumindo que a primeira coluna é 'piRNAs'
+
+# 9. Define annotation for sample types (ANL and tumor)
+sample_types <- ifelse(grepl("^LUSC_Tumor", colnames(expression_data_heat)), "Tumor", "ANL")
+sample_types <- factor(sample_types, levels = c("ANL", "Tumor"))
+annotation_col <- data.frame(SampleType = sample_types)
+rownames(annotation_col) <- colnames(expression_data_heat)
+annotation_colors <- list(SampleType = c("ANL" = "#1f77b4", "Tumor" = "#FF8F61"))
+
+# 10. Generate and show heatmap in the R Markdown document
+save3 <- pheatmap(expression_data_heat, 
+         cluster_rows = F,
+         cluster_cols = T,
+         show_rownames = F,
+         show_colnames = F, 
+         scale = "row",
+         color = colorRampPalette(c("blue", "white", "red"))(10),
+         main = "LUSC Tumor-Specific piRNAs",
+         annotation_col = annotation_col,
+         annotation_colors = annotation_colors,
+         clustering_distance_cols = "euclidean",
+         clustering_method = "ward.D")
+```
+
+### Save Results as Files
+
+Here, we save the results of the filtered piRNAs and their classifications as text files for further analysis.
+
+```{r}
+# 11. Save piRNA classification results to text files
+write.table(exclusive_in_tumor, file = "expressed_in_tumor_LUSC.txt", sep = "	", row.names = FALSE, quote = FALSE)
+write.table(exclusive_in_anl, file = "expressed_in_ANL_LUSC.txt", sep = "	", row.names = FALSE, quote = FALSE)
+write.table(shared_between_groups, file = "shared_piRNAs_LUSC.txt", sep = "	", row.names = FALSE, quote = FALSE)
+```
+
+### Visualize and Save the Heatmap
+
+In this section, the heatmap plot will be saved as a PNG file for publication or presentation purposes.
+
+```{r}
+# 12. Save the heatmap as a PNG file
+ggsave(filename = "Figure_3.png", plot = last_plot(), dpi = 600, width = 5, height = 4)
+```
+
+---
+
+# **Fetal piRNA Analysis**
+
+### 1. Load and Read Fetal Samples Data
+
+```{r}
+# Reading the piRNA count data from a text file
+# Make sure the file path is correct. Consider using relative paths for better portability
+fetal_samples_counts <- read.delim("C:/Users/User/OneDrive/Área de Trabalho/Michelle paper/fetal_samples_counts.txt", row.names=1)
+```
+
+### 2. Data Filtering: piRNAs > 1 RPM Expressed in at Least 10% of Samples
+
+```{r}
+# Number of total samples (columns in the dataset)
+total_samples <- ncol(fetal_samples_counts)
+
+# Define the minimum number of samples for expression (at least 10% of the total samples)
+min_samples <- ceiling(total_samples * 0.10)  # Round up to the nearest integer
+
+# Filter piRNAs that are expressed (count >= 1) in at least 10% of the samples
+filtered_df <- fetal_samples_counts[rowSums(fetal_samples_counts >= 1) >= min_samples, ]
+
+# Display the table interactively
+datatable(filtered_df, options = list(pageLength = 10))
+```
+
+### 3. Save the filtered data frame to a CSV file for further analysis or reporting
+```{r}
+write.csv(filtered_df, "piRNAs_expressed_in_fetal_samples.csv", row.names = TRUE)
+```
+
+---
+
+# **piRNA Expression in LUAD, LUSC, and Fetal Tissues**
+
+### Introduction
+
+This analysis explores the expression of piRNAs in lung cancer subtypes LUAD and LUSC, along with fetal tissues, to identify exclusive piRNAs and shared piRNAs with ANL. The data is visualized through bar and pie charts.
+
+
+- **435 piRNAs in LUAD**
+- **406 piRNAs in LUSC**
+- **437 piRNAsin Fetal samples**
+
+
+### Bar Chart: piRNA Count in LUAD and LUSC
+
+```{r}
+# 1. Create data frame for bar chart
+barchart <- data.frame(
+  Group = c("LUAD", "LUSC"),
+  piRNA_Count = c(435, 406)
+)
+
+# 2. Generate bar chart
+ggplot(barchart, aes(x = Group, y = piRNA_Count, fill = Group)) +
+  geom_bar(stat = "identity", width = 0.6) +
+  labs(title = "Number of Expressed piRNAs in LUAD and LUSC", 
+       x = "Cancer Type", y = "Number of piRNAs") +
+  theme_classic() +
+  scale_fill_manual(values = c("LUAD" = "blue", "LUSC" = "orange")) +
+  geom_text(aes(label = piRNA_Count), vjust = -0.5, size = 5) # Add labels to bars
+```
+
+### Pie Charts: Exclusive vs Shared piRNAs
+
+```{r}
+# 3. Define the total and exclusive piRNAs for LUAD, LUSC, and Fetal tissues
+luad_total <- 435
+lusc_total <- 406
+fetal_total <- 437
+
+luad_exclusive <- round(16.1 / 100 * luad_total)  # 70 piRNAs
+lusc_exclusive <- round(17.5 / 100 * lusc_total)  # 71 piRNAs
+
+# 4. Data frames for each pie chart
+data_luad <- data.frame(
+  Category = c("Shared with ANL", "Exclusive to Tumor"),
+  Count = c(luad_total - luad_exclusive, luad_exclusive)
+)
+
+data_lusc <- data.frame(
+  Category = c("Shared with ANL", "Exclusive to Tumor"),
+  Count = c(lusc_total - lusc_exclusive, lusc_exclusive)
+)
+
+# 5. Function to create pie chart
+create_pie_chart <- function(data, title) {
+  ggplot(data, aes(x = "", y = Count, fill = Category)) +
+    geom_bar(stat = "identity", width = 1) +
+    coord_polar(theta = "y") +
+    theme_void() +
+    labs(title = title) +
+    geom_text(aes(label = Count), position = position_stack(vjust = 0.5), size = 5) +
+    scale_fill_manual(values = c("Shared with ANL" = "#1f77b4", "Exclusive to Tumor" = "#ff7f0e"))
+}
+
+# 6. Create individual pie charts for LUAD and LUSC
+p1 <- create_pie_chart(data_luad, "LUAD piRNA Distribution")
+p2 <- create_pie_chart(data_lusc, "LUSC piRNA Distribution")
+
+print(p1)
+print(p2)
+```
+
+
+## piRNAs in LUAD and LUSC
+
+```{r}
+# Function to create a stacked bar chart
+create_bar_plot <- function(data, title) {
+  ggplot(data, aes(x = "", y = Value, fill = Category)) +
+    geom_bar(stat = "identity", width = 1, position = "stack") +
+    scale_fill_manual(values = data$Color) +
+    labs(title = title) +
+    theme_classic() +
+    theme(
+      legend.title = element_blank(), 
+      legend.position = "bottom"
+    ) +
+    geom_text(aes(label = Value), position = position_stack(vjust = 0.5), color = "black")
+}
+
+# Data for LUAD
+data_LUAD <- data.frame(
+  Category = c("Shared with ANL", "Exclusive to Tumor", "Exclusive to ANL"),
+  Value = c(336, 70, 29),
+  Color = c("#1f77b4", "#66c2a5", "gray")
+)
+
+# Data for LUSC
+data_LUSC <- data.frame(
+  Category = c("Shared with ANL", "Exclusive to Tumor", "Exclusive to ANL"),
+  Value = c(326, 71, 9),
+  Color = c("#1f77b4", "#fc8d62", "gray")
+)
+
+# Create the plots
+luad_bar <- create_bar_plot(data_LUAD, "LUAD")
+lusc_bar <- create_bar_plot(data_LUSC, "LUSC")
+
+# Arrange the plots side by side
+combined_plot <- grid.arrange(luad_bar, lusc_bar, ncol = 2)
+
+# Save the combined plot
+ggsave(filename = "stacked_bar.png", plot = combined_plot, dpi = 600, width = 10, height = 10)
+```
+
+
+
+### Overall piRNA Distribution (LUAD, LUSC, and Fetal Tissues)
+
+```{r}
+# 7. Combined data for total piRNAs
+data_combined <- data.frame(
+  Type = c("LUAD", "LUSC", "Fetal"),
+  Total_piRNAs = c(luad_total, lusc_total, fetal_total)
+)
+
+# 8. Overall summary pie chart
+p3 <- ggplot(data_combined, aes(x = "", y = Total_piRNAs, fill = Type)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar(theta = "y") +
+  theme_void() +
+  labs(title = "Total piRNAs in LUAD, LUSC, and Fetal Tissues") +
+  geom_text(aes(label = Total_piRNAs), position = position_stack(vjust = 0.5), size = 5) +
+  scale_fill_manual(values = c("LUAD" = "#66c2a5", "LUSC" = "#fc8d62", "Fetal" = "#a6bddb" ))
+
+# show plot
+p3
+```
+
+---
+
+
+# **piRNA Expression Across Different Groups**
+
+
+### Introduction
+
+This analysis aims to explore the piRNAs that are uniquely expressed in different biological groups: **ANL**, **Tumor (LUAD and LUSC)**, and **Fetal**. The UpSet plot will illustrate the intersections of piRNA expression between these groups, highlighting the specific piRNAs expressed in each group, as well as shared piRNAs across multiple groups. The groups of interest are:
+
+- **ANL**: A set of piRNAs exclusively expressed in ANL (from LUAD or LUSC).
+- **Tumor (LUAD and LUSC)**: piRNAs uniquely expressed in Lung Adenocarcinoma (LUAD) and Squamous Cell Lung Cancer (LUSC).
+- **Fetal**: piRNAs exclusively expressed in fetal tissues.
+- The plot will also explore the co-expressions, for example, between fetal and ANL, LUAD and fetal, and so on.
+
+---
+
+### Step 1: Defining Intersection Quantities
+
+```{r}
+# Quantities representing the number of piRNAs in each intersection
+quantities <- c(
+  LUAD = 16,                # Exclusively expressed in LUAD
+  fetal = 361,              # Exclusively expressed in fetal tissue
+  LUSC = 9,                 # Exclusively expressed in LUSC
+  ANL = 27,                 # Exclusively expressed in ANL
+  fetal_ANL = 1,            # Shared between fetal and ANL
+  LUAD_LUSC = 9,            # Shared between LUAD and LUSC
+  LUAD_fetal = 22,          # Shared between LUAD and fetal
+  LUAD_LUSC_fetal = 22,     # Shared between LUAD, LUSC, and fetal
+  LUSC_fetal = 25,          # Shared between LUSC and fetal
+  LUSC_fetal_ANL = 6,       # Shared between LUSC, fetal, and ANL
+  LUAD_ANL = 1              # Shared between LUAD and ANL
+)
+```
+
+### Step 2: Creating the Binary Intersection Data Frame
+```{r}
+# Create a binary dataframe for the intersections
+intersections_df <- data.frame(
+  LUAD = rep(0, sum(quantities)),
+  LUSC = rep(0, sum(quantities)),
+  fetal = rep(0, sum(quantities)),
+  ANL = rep(0, sum(quantities))
+)
+
+# Assigning 1s to the respective intersections
+intersections_df[1:quantities["LUAD"], "LUAD"] <- 1  # Exclusively LUAD
+intersections_df[(quantities["LUAD"] + 1):(quantities["LUAD"] + quantities["LUSC"]), "LUSC"] <- 1  # Exclusively LUSC
+intersections_df[(quantities["LUAD"] + quantities["LUSC"] + 1):(quantities["LUAD"] + quantities["LUSC"] + quantities["fetal"]), "fetal"] <- 1  # Exclusively fetal
+intersections_df[(quantities["LUAD"] + quantities["LUSC"] + quantities["fetal"] + 1):(quantities["LUAD"] + quantities["LUSC"] + quantities["fetal"] + quantities["ANL"]), "ANL"] <- 1  # Exclusively ANL
+
+# Adding shared intersections
+intersections_df[(quantities["LUAD"] + quantities["LUSC"] + quantities["fetal"] + quantities["ANL"] + 1):(quantities["LUAD"] + quantities["LUSC"] + quantities["fetal"] + quantities["ANL"] + quantities["fetal_ANL"]), c("fetal", "ANL")] <- 1
+intersections_df[(quantities["LUAD"] + quantities["LUSC"] + quantities["fetal"] + quantities["ANL"] + quantities["fetal_ANL"] + 1):(quantities["LUAD"] + quantities["LUSC"] + quantities["fetal"] + quantities["ANL"] + quantities["fetal_ANL"] + quantities["LUAD_LUSC"]), c("LUAD", "LUSC")] <- 1
+intersections_df[(quantities["LUAD"] + quantities["LUSC"] + quantities["fetal"] + quantities["ANL"] + quantities["fetal_ANL"] + quantities["LUAD_LUSC"] + 1):(quantities["LUAD"] + quantities["LUSC"] + quantities["fetal"] + quantities["ANL"] + quantities["fetal_ANL"] + quantities["LUAD_LUSC"] + quantities["LUAD_fetal"]), c("LUAD", "fetal")] <- 1
+intersections_df[(quantities["LUAD"] + quantities["LUSC"] + quantities["fetal"] + quantities["ANL"] + quantities["fetal_ANL"] + quantities["LUAD_LUSC"] + quantities["LUAD_fetal"] + 1):(quantities["LUAD"] + quantities["LUSC"] + quantities["fetal"] + quantities["ANL"] + quantities["fetal_ANL"] + quantities["LUAD_LUSC"] + quantities["LUAD_fetal"] + quantities["LUAD_LUSC_fetal"]), c("LUAD", "LUSC", "fetal")] <- 1
+intersections_df[(quantities["LUAD"] + quantities["LUSC"] + quantities["fetal"] + quantities["ANL"] + quantities["fetal_ANL"] + quantities["LUAD_LUSC"] + quantities["LUAD_fetal"] + quantities["LUAD_LUSC_fetal"] + 1):(quantities["LUAD"] + quantities["LUSC"] + quantities["fetal"] + quantities["ANL"] + quantities["fetal_ANL"] + quantities["LUAD_LUSC"] + quantities["LUAD_fetal"] + quantities["LUAD_LUSC_fetal"] + quantities["LUSC_fetal"]), c("LUSC", "fetal")] <- 1
+intersections_df[(quantities["LUAD"] + quantities["LUSC"] + quantities["fetal"] + quantities["ANL"] + quantities["fetal_ANL"] + quantities["LUAD_LUSC"] + quantities["LUAD_fetal"] + quantities["LUAD_LUSC_fetal"] + quantities["LUSC_fetal"] + 1):(quantities["LUAD"] + quantities["LUSC"] + quantities["fetal"] + quantities["ANL"] + quantities["fetal_ANL"] + quantities["LUAD_LUSC"] + quantities["LUAD_fetal"] + quantities["LUAD_LUSC_fetal"] + quantities["LUSC_fetal"] + quantities["LUSC_fetal_ANL"]), c("LUSC", "fetal", "ANL")] <- 1
+intersections_df[(quantities["LUAD"] + quantities["LUSC"] + quantities["fetal"] + quantities["ANL"] + quantities["fetal_ANL"] + quantities["LUAD_LUSC"] + quantities["LUAD_fetal"] + quantities["LUAD_LUSC_fetal"] + quantities["LUSC_fetal"] + quantities["LUSC_fetal_ANL"] + 1):(quantities["LUAD"] + quantities["LUSC"] + quantities["fetal"] + quantities["ANL"] + quantities["fetal_ANL"] + quantities["LUAD_LUSC"] + quantities["LUAD_fetal"] + quantities["LUAD_LUSC_fetal"] + quantities["LUSC_fetal"] + quantities["LUSC_fetal_ANL"] + quantities["LUAD_ANL"]), c("LUAD", "ANL")] <- 1
+```
+
+### Step 3: Generating the UpSet Plot
+
+```{r}
+# Generate the UpSet plot
+
+suppressWarnings(
+  UpSetR::upset(
+    intersections_df, 
+    sets = c("LUAD", "LUSC", "fetal", "ANL"), 
+    sets.bar.color = c("#8da0cb", "#fc8d62", "#66c2a5", "#1f77b4"),  # Color palette for sets
+    order.by = "freq",  # Order by frequency of intersections
+    point.size = 4,
+    set_size.show = TRUE,
+    text.scale = 2,
+    main.bar.color = c("#8da0cb", "#1f77b4", "gray", "gray", "red", "#66c2a5", "#fc8d62", "gray", "gray", "gray", "gray"),
+    matrix.color = c("#8da0cb", "#1f77b4", "gray", "gray", "red", "#66c2a5", "#fc8d62", "gray", "gray", "gray", "gray")
+  )
+)
+```
+
+### Conclusion
+The UpSet plot provides an effective visualization of the piRNAs that are expressed in the LUAD, LUSC, fetal, and ANL groups, allowing us to better understand the unique and shared piRNA expressions across these tissues. The resulting graphic can be used to identify potential biomarkers or therapeutic targets in lung cancer and fetal development.
+

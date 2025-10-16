@@ -1,0 +1,827 @@
+---
+title: "Identification of Oncofetal piRNAs"
+author: "Vanessa G. P. Souza"
+date: "2025-02-28"
+output:
+  html_document: default
+  word_document: default
+  pdf_document: default
+---
+
+## Introduction
+
+This analysis focuses on identifying oncofetal PIWI-interacting RNAs (piRNAs) as potential prognostic biomarkers in Lung Adenocarcinoma (LUAD) and Lung Squamous Cells (LUSC). This study utilized four cohorts: the TCGA cohort, which included paired tumor and adjacent adult non-neoplastic lung tissue (ANL) samples for lung adenocarcinoma (LUAD) and lung squamous cell carcinoma (LUSC) from The Cancer Genome Atlas (TCGA); a fetal lung (FL) cohort comprising human fetal lung samples; and a validation cohort from the British Columbia Cancer Agency (BCCA) containing LUAD and paired ANL tissue samples.
+
+# LUAD piRNA Analysis
+
+### Load Libraries
+
+```{r Load_Libraries, warning=FALSE, message=FALSE}
+
+# Load necessary libraries
+library(dplyr)
+library(ggplot2)
+library(readxl)
+library(reshape2)
+library(tibble)
+library(pheatmap)
+library(RColorBrewer)
+library(tidyr)
+library(DT)
+library(knitr)
+```
+
+### Input dataset
+
+```{r}
+# Load the dataset
+All_couns_LUAD_Michelle <- read_excel("All counts LUAD_Michelle.xlsx")
+
+##datframe
+All_couns_LUAD_Michelle <- as.data.frame(All_couns_LUAD_Michelle)
+
+# Ensure the first column contains piRNA names and set them as row names
+rownames(All_couns_LUAD_Michelle) <- All_couns_LUAD_Michelle$piRNAs
+data2 <- All_couns_LUAD_Michelle
+
+All_couns_LUAD_Michelle$piRNAs <- NULL  # Remove the first column after setting row names
+rownames(All_couns_LUAD_Michelle) <- rownames(data2)
+```
+
+### These are the piRNA not expressed in ANL
+
+```{r}
+# Define the list of selected piRNAs
+selected_piRNAs <- c("URS000000AA0C|piR-49039",
+                     "URS000002DD41|piR-36026",
+                     "URS00000508D0|piR-34021",
+                     "URS0000066313|piR-38252",
+                     "URS000006A033|piR-44717",
+                     "URS000008666A|piR-45884",
+                     "URS00000B383E|piR-44719",
+                     "URS00000B8F4E|piR-33519",
+                     "URS00000C8761|piR-35462",
+                     "URS00000EDB82|piR-38574",
+                     "URS000012A765|piR-41794",
+                     "URS000013A1FE|piR-50446",
+                     "URS000017EEB4|piR-33687",
+                     "URS000019676E|piR-30259",
+                     "URS00001ABE1D|piR-34804",
+                     "URS00001CE783|piR-31703",
+                     "URS00001DC20A|piR-36496",
+                     "URS00001DCFCF|piR-50725",
+                     "URS0000244976|piR-33534",
+                     "URS00002FDE5F|piR-54888",
+                     "URS000032C0C7|piR-34221",
+                     "URS000033E13A|piR-49040",
+                     "URS0000348F5F|piR-55706",
+                     "URS00003905DB|piR-37183",
+                     "URS00003A533D|piR-33686",
+                     "URS00003B4A72|piR-37182",
+                     "URS000040DC34|piR-35175",
+                     "URS0000454FC3|piR-61135",
+                     "URS0000459614|piR-33949",
+                     "URS000048B6AB|piR-44715",
+                     "URS00004A631E|piR-57145",
+                     "URS00004E11B6|piR-31841",
+                     "URS00004F3544|piR-58186",
+                     "URS0000517230|piR-43452",
+                     "URS0000526FBD|piR-30926",
+                     "URS0000539EED|piR-36494",
+                     "URS000054557D|piR-45883",
+                     "URS000054DC1D|piR-35174",
+                     "URS0000565C7F|piR-33685",
+                     "URS000056FCD5|piR-34811",
+                     "URS000060141E|piR-33054",
+                     "URS0000613264|piR-50436",
+                     "URS000061F7FC|piR-44716",
+                     "URS00003097D9|piR-34420")
+
+# Subset data to include only selected piRNAs
+filtered_data <- All_couns_LUAD_Michelle[rownames(All_couns_LUAD_Michelle) %in% selected_piRNAs, ]
+
+# Convert filtered data to a dataframe (if needed) and ensure rownames match selected piRNAs
+filtered_data <- as.data.frame(filtered_data)
+rownames(filtered_data) <- selected_piRNAs
+```
+
+### Define Sample Groups
+
+```{r}
+# Extract sample groups based on column names
+fetal_samples <- grep("^Fetal_", colnames(All_couns_LUAD_Michelle), value = TRUE)
+anl_samples <- grep("^ANL_", colnames(All_couns_LUAD_Michelle), value = TRUE)
+tumor_samples <- grep("^Tumor_", colnames(All_couns_LUAD_Michelle), value = TRUE)
+
+# Subset data to include only selected piRNAs
+filtered_data <- All_couns_LUAD_Michelle[rownames(All_couns_LUAD_Michelle) %in% selected_piRNAs, ]
+
+filtered_data <- as.data.frame(filtered_data)
+rownames(filtered_data) <- selected_piRNAs
+
+# Display the table (interactively within the R Markdown)
+datatable(filtered_data, options = list(pageLength = 10))  # This will display the table
+```
+
+### Wilcoxon Test and Fold Change Calculation
+
+```{r, warning=FALSE}
+# Function to perform Wilcoxon test and compute fold change
+perform_wilcoxon <- function(df, group1, group2, paired = FALSE) {
+  results <- t(apply(df, 1, function(x) {
+    group1_values <- as.numeric(x[group1])
+    group2_values <- as.numeric(x[group2])
+    
+    test <- wilcox.test(group1_values, group2_values, paired = paired)
+    fc <- mean(group1_values) / mean(group2_values)  
+    
+    return(c(p_value = test$p.value, fc = fc))
+  }))
+  
+  results <- as.data.frame(results)
+  colnames(results) <- c("p_value", "fc")
+  results$adjusted_p_value <- p.adjust(results$p_value, method = "BH")
+  rownames(results) <- rownames(df)  # Ensure row names (piRNAs) are kept
+  
+  return(results)
+}
+
+# Perform differential expression analysis
+tumor_vs_anl <- perform_wilcoxon(filtered_data, tumor_samples, anl_samples, paired = T)
+fetal_vs_anl <- perform_wilcoxon(filtered_data, fetal_samples, anl_samples, paired = FALSE)
+
+# Convert rownames to a column (if not already)
+tumor_vs_anl <- tumor_vs_anl %>% 
+  tibble::rownames_to_column(var = "piRNA")
+
+fetal_vs_anl <- fetal_vs_anl %>% 
+  tibble::rownames_to_column(var = "piRNA")
+
+# Create a new column to mark differentially expressed piRNAs
+tumor_vs_anl <- tumor_vs_anl %>%
+  mutate(Differentially_Expressed = ifelse(adjusted_p_value < 0.05 & fc > 2, "Yes", "No"))
+
+fetal_vs_anl <- fetal_vs_anl %>%
+  mutate(Differentially_Expressed = ifelse(adjusted_p_value < 0.05 & fc > 2, "Yes", "No"))
+```
+
+### Tumor vs. ANL
+
+```{r, warning=FALSE}
+# Display the table (interactively within the R Markdown)
+datatable(tumor_vs_anl, options = list(pageLength = 10))  # This will display the table
+```
+
+### Fetal vs. ANL
+
+```{r, warning=FALSE}
+# Display the table (interactively within the R Markdown)
+datatable(fetal_vs_anl, options = list(pageLength = 10))  # This will display the table
+```
+
+### Show the piRNAs that are differentially expressed in both
+
+```{r, warning=FALSE}
+common_piRNAs <- inner_join(
+  tumor_vs_anl %>% filter(Differentially_Expressed == "Yes"),
+  fetal_vs_anl %>% filter(Differentially_Expressed == "Yes"),
+  by = "piRNA"
+)
+
+# Display the table interactively
+datatable(common_piRNAs, options = list(pageLength = 10))
+```
+
+### List of Oncofetal piRNAs in LUAD
+
+```{r, warning=FALSE}
+# Extract only the piRNA names
+piRNA_names <- common_piRNAs$piRNA
+
+# Create a markdown-style bullet list
+piRNA_list <- paste("- ", piRNA_names, collapse = "\n")
+
+# Print it so R Markdown renders it as a proper list
+cat(piRNA_list)
+```
+
+### Save Results to Files
+
+```{r}
+### Save results to text files
+write.table(tumor_vs_anl, "piRNA_DE_LUAD_Tumor_vs_ANL.txt", sep = "\t", quote = FALSE, row.names = FALSE)
+write.table(fetal_vs_anl, "piRNA_DE_LUAD_Fetal_vs_ANL.txt", sep = "\t", quote = FALSE, row.names = FALSE)
+```
+
+### Visualization: Boxplot of Top Differentially Expressed (in Tumor vs ANL) oncofetalpiRNAs
+
+```{r}
+# Define selected piRNAs for plotting
+# List of selected piRNAs
+selected_piRNAs <- c("piR-44719",
+                     "piR-34811",
+                     "piR-41794",
+                     "piR-54888",
+                     "piR-36026",
+                     "piR-58186")
+  
+  
+# Define y-axis limits for each piRNA
+y_limits <- list(
+  "piR-44719" = c(0, 40),
+  "piR-34811" = c(0, 50),
+  "piR-41794" = c(0, 5),
+  "piR-54888" = c(0, 15),
+  "piR-36026" = c(0, 50)
+)
+
+# Convert rownames to a column
+All_couns_LUAD_Michelle_new <- tibble::rownames_to_column(All_couns_LUAD_Michelle, var = "piRNA")
+
+# Define color scheme
+group_colors <- c("ANL" = "#1f77b4", "Tumor" = "#66c2a5", "Fetal" = "#8da0cb")
+
+# Reshape data from wide to long format
+long_data <- melt(All_couns_LUAD_Michelle_new, id.vars = "piRNA", variable.name = "Sample", value.name = "Expression")
+
+# Extract sample group information
+long_data <- long_data %>%
+  mutate(Group = case_when(
+    grepl("^Fetal_", Sample) ~ "Fetal",
+    grepl("^ANL_", Sample) ~ "ANL",
+    grepl("^Tumor_", Sample) ~ "Tumor",
+    TRUE ~ "Other"
+  ))
+
+# Remove everything before and including "|"
+long_data$piRNA <- sub(".*\\|", "", long_data$piRNA)
+
+# Create a combined bar plot with facets
+p <- ggplot(long_data %>% filter(piRNA %in% selected_piRNAs), aes(x = Group, y = Expression, fill = Group)) +
+  stat_summary(fun = mean, geom = "bar", position = "dodge", color = "black") +  # Bar plot with mean values
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.3, position = position_dodge(0.9)) +  # Error bars (SE)
+  theme_minimal() +
+  labs(x = "Sample Group", y = "Expression (RPM)") +
+  scale_fill_manual(values = group_colors) +
+  facet_wrap(~ piRNA, scales = "free_y") +  # Separate facets, independent y-axis limits
+  theme(
+    plot.title = element_text(size = 14, face = "bold"),
+    strip.text = element_text(size = 12, face = "bold")  # Adjust facet labels
+  )
+
+## view
+p
+```
+
+# Identification of oncofetal piRNAs in TCGA-LUSC
+
+This analysis involves differential gene expression (DGE) analysis using RNA-Seq data from TCGA-LUSC samples and lung fetal samples. The data were processed to analyze piRNA expression in normal lung tissue (ANL) and tumor samples. We used Wilcoxon tests to determine significant piRNA expression differences between groups. Differential expression of piRNAs was evaluated using the Wilcoxon test for tumor vs. ANL (paired samples) and FL vs. ANL (unpaired samples). Fold change (FC) was calculated as the ratio of mean expression between groups. P-values were adjusted with the Benjamini-Hochberg correction (BH) to control the false discovery rate. piRNAs were considered differentially expressed if they had an adjusted p-value \< 0.05 and FC \> 2. Oncofetal piRNAs were defined as those that were non-expressed in ANL but overexpressed in both tumor and fetal lung samples (BH p \< 0.05, FC \> 2).
+
+### Input dataset
+
+```{r Load_Libraries_2, warning=FALSE, message=FALSE}
+# Load the dataset
+All_couns_LUSC_Michelle <- read_excel("All counts LUSC_Michelle.xlsx")
+
+##datframe
+All_couns_LUSC_Michelle <- as.data.frame(All_couns_LUSC_Michelle)
+
+# Ensure the first column contains piRNA names and set them as row names
+rownames(All_couns_LUSC_Michelle) <- All_couns_LUSC_Michelle$piRNAs
+data3 <- All_couns_LUSC_Michelle
+
+All_couns_LUSC_Michelle$piRNAs <- NULL  # Remove the first column after setting row names
+rownames(All_couns_LUSC_Michelle) <- rownames(data3)
+```
+
+### These are the piRNA not expressed in ANL
+
+```{r}
+selected_piRNAs <- c("URS0000001B02|piR-34342",
+                     "URS000003587D|piR-34789",
+                     "URS000003B4AC|piR-33127",
+                     "URS00000508D0|piR-34021",
+                     "URS0000066313|piR-38252",
+                     "URS0000067282|piR-32148",
+                     "URS000007540B|piR-30112",
+                     "URS00000EDB82|piR-38574",
+                     "URS000011C1E6|piR-55151",
+                     "URS000011FF8D|piR-34929",
+                     "URS0000132D2E|piR-34341",
+                     "URS000013A1FE|piR-50446",
+                     "URS00001400D7|piR-38600",
+                     "URS00001402CA|piR-33535",
+                     "URS0000147617|piR-55660",
+                     "URS00001744C5|piR-43176",
+                     "URS00001ABE1D|piR-34804",
+                     "URS00001DBE3D|piR-33437",
+                     "URS00001DC20A|piR-36496",
+                     "URS00001DCFCF|piR-50725",
+                     "URS0000251E99|piR-34249",
+                     "URS000026C516|piR-54626",
+                     "URS0000281D7C|piR-58356",
+                     "URS00002A521F|piR-58355",
+                     "URS00002B6A6F|piR-36056",
+                     "URS00002C8F87|piR-31520",
+                     "URS00002FDE5F|piR-54888",
+                     "URS000032C0C7|piR-34221",
+                     "URS000033E13A|piR-49040",
+                     "URS0000348F5F|piR-55706",
+                     "URS000037961A|piR-30890",
+                     "URS000040DC34|piR-35175",
+                     "URS0000418A01|piR-55152",
+                     "URS000042C7F5|piR-51309",
+                     "URS000042EE02|piR-31080",
+                     "URS00004359E4|piR-35953",
+                     "URS000043B9A8|piR-55150",
+                     "URS0000459614|piR-33949",
+                     "URS00004A074B|piR-57947",
+                     "URS00004A631E|piR-57145",
+                     "URS00004CF29B|piR-33404",
+                     "URS00004D79E4|piR-32571",
+                     "URS00004E11B6|piR-31841",
+                     "URS00004F3544|piR-58186",
+                     "URS00004FF920|piR-36150",
+                     "URS0000517230|piR-43452",
+                     "URS000051F814|piR-34597",
+                     "URS0000526FBD|piR-30926",
+                     "URS0000539EED|piR-36494",
+                     "URS000054DC1D|piR-35174",
+                     "URS0000593A81|piR-41464",
+                     "URS000060141E|piR-33054",
+                     "URS0000613264|piR-50436")
+
+# Subset data to include only selected piRNAs
+filtered_data <- All_couns_LUSC_Michelle[rownames(All_couns_LUSC_Michelle) %in% selected_piRNAs, ]
+
+# Convert filtered data to a dataframe (if needed) and ensure rownames match selected piRNAs
+filtered_data <- as.data.frame(filtered_data)
+rownames(filtered_data) <- selected_piRNAs
+```
+
+### Define Sample Groups
+
+```{r}
+fetal_samples <- grep("^Fetal_", colnames(All_couns_LUSC_Michelle), value = TRUE)
+anl_samples <- grep("^ANL_", colnames(All_couns_LUSC_Michelle), value = TRUE)
+tumor_samples <- grep("^Tumor_", colnames(All_couns_LUSC_Michelle), value = TRUE)
+
+# Display the table (interactively within the R Markdown)
+datatable(filtered_data, options = list(pageLength = 10))  # This will display the table
+```
+
+### Wilcoxon Test and Fold Change Calculation
+
+```{r, warning=FALSE}
+perform_wilcoxon <- function(df, group1, group2, paired = FALSE) {
+  results <- t(apply(df, 1, function(x) {
+    group1_values <- as.numeric(x[group1])
+    group2_values <- as.numeric(x[group2])
+    
+    test <- wilcox.test(group1_values, group2_values, paired = paired)
+    fc <- mean(group1_values) / mean(group2_values)  
+    
+    return(c(p_value = test$p.value, fc = fc))
+  }))
+  
+  results <- as.data.frame(results)
+  colnames(results) <- c("p_value", "fc")
+  results$adjusted_p_value <- p.adjust(results$p_value, method = "BH")
+  rownames(results) <- rownames(df)  # Ensure row names (piRNAs) are kept
+  
+  return(results)
+}
+
+# Perform differential expression analysis
+tumor_vs_anl <- perform_wilcoxon(filtered_data, tumor_samples, anl_samples, paired = T)
+fetal_vs_anl <- perform_wilcoxon(filtered_data, fetal_samples, anl_samples, paired = FALSE)
+
+# Convert rownames to a column (if not already)
+tumor_vs_anl <- tumor_vs_anl %>% 
+  tibble::rownames_to_column(var = "piRNA")
+
+fetal_vs_anl <- fetal_vs_anl %>% 
+  tibble::rownames_to_column(var = "piRNA")
+
+# Create a new column to mark differentially expressed piRNAs
+tumor_vs_anl <- tumor_vs_anl %>%
+  mutate(Differentially_Expressed = ifelse(adjusted_p_value < 0.05 & fc > 2, "Yes", "No"))
+
+fetal_vs_anl <- fetal_vs_anl %>%
+  mutate(Differentially_Expressed = ifelse(adjusted_p_value < 0.05 & fc > 2, "Yes", "No"))
+```
+
+### Tumor vs. ANL
+
+```{r, warning=FALSE}
+# Display the table (interactively within the R Markdown)
+datatable(tumor_vs_anl, options = list(pageLength = 10))  # This will display the table
+```
+
+### Fetal vs. ANL
+
+```{r, warning=FALSE}
+# Display the table (interactively within the R Markdown)
+datatable(fetal_vs_anl, options = list(pageLength = 10))  # This will display the table
+```
+
+### Show the piRNAs that are differentially expressed in both
+
+```{r, warning=FALSE}
+common_piRNAs <- inner_join(
+  tumor_vs_anl %>% filter(Differentially_Expressed == "Yes"),
+  fetal_vs_anl %>% filter(Differentially_Expressed == "Yes"),
+  by = "piRNA"
+)
+
+# Display the table interactively
+datatable(common_piRNAs, options = list(pageLength = 10))
+```
+
+### List of Oncofetal piRNAs in LUSC
+
+```{r, warning=FALSE}
+# Extract only the piRNA names
+piRNA_names <- common_piRNAs$piRNA
+
+# Create a markdown-style bullet list
+piRNA_list <- paste("- ", piRNA_names, collapse = "\n")
+
+# Print it so R Markdown renders it as a proper list
+cat(piRNA_list)
+```
+
+### Save Results to Files
+
+```{r}
+### Save results to text files
+write.table(tumor_vs_anl, "piRNA_DE_LUSC_Tumor_vs_ANL.txt", sep = "\t", quote = FALSE, row.names = FALSE)
+write.table(fetal_vs_anl, "piRNA_DE_LUSC_Fetal_vs_ANL.txt", sep = "\t", quote = FALSE, row.names = FALSE)
+```
+
+### Visualization: Boxplot of Top Differentially Expressed oncofetalpiRNAs (top FC) (in Tumor vs ANL)
+
+```{r}
+# Define selected piRNAs for plotting
+# List of selected piRNAs
+selected_piRNAs <- c("piR-34789",
+                     "piR-36150",
+                     "piR-41464",
+                     "piR-35953",
+                     "piR-55660",
+                     "piR-31080")
+  
+  
+# Define y-axis limits for each piRNA
+y_limits <- list(
+  "piR-44719" = c(0, 40),
+  "piR-34811" = c(0, 50),
+  "piR-41794" = c(0, 50),
+  "piR-54888" = c(0, 40),
+  "piR-36026" = c(0, 50)
+)
+
+# Convert rownames to a column
+All_couns_LUSC_Michelle_new <- tibble::rownames_to_column(All_couns_LUSC_Michelle, var = "piRNA")
+
+# Define color scheme
+group_colors <- c("ANL" = "#1f77b4", "Tumor" = "#fc8d62", "Fetal" = "#8da0cb")
+
+# Reshape data from wide to long format
+long_data <- melt(All_couns_LUSC_Michelle_new, id.vars = "piRNA", variable.name = "Sample", value.name = "Expression")
+
+# Extract sample group information
+long_data <- long_data %>%
+  mutate(Group = case_when(
+    grepl("^Fetal_", Sample) ~ "Fetal",
+    grepl("^ANL_", Sample) ~ "ANL",
+    grepl("^Tumor_", Sample) ~ "Tumor",
+    TRUE ~ "Other"
+  ))
+
+# Remove everything before and including "|"
+long_data$piRNA <- sub(".*\\|", "", long_data$piRNA)
+
+# Create a combined bar plot with facets
+p2 <- ggplot(long_data %>% filter(piRNA %in% selected_piRNAs), aes(x = Group, y = Expression, fill = Group)) +
+  stat_summary(fun = mean, geom = "bar", position = "dodge", color = "black") +  # Bar plot with mean values
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.3, position = position_dodge(0.9)) +  # Error bars (SE)
+  theme_minimal() +
+  labs(x = "Sample Group", y = "Expression (RPM)") +
+  scale_fill_manual(values = group_colors) +
+  facet_wrap(~ piRNA, scales = "free_y") +  # Separate facets, independent y-axis limits
+  theme(
+    plot.title = element_text(size = 14, face = "bold"),
+    strip.text = element_text(size = 12, face = "bold")  # Adjust facet labels
+  )
+
+## view
+p2
+```
+
+# Identification of oncofetal piRNAs in BCCA-LUAD
+
+This analysis involves differential gene expression (DGE) analysis using RNA-Seq data from BCCA-LUAD samples and lung fetal samples. The data were processed to analyze piRNA expression in normal lung tissue (ANL) and tumor samples. We used Wilcoxon tests to determine significant piRNA expression differences between groups. Differential expression of piRNAs was evaluated using the Wilcoxon test for tumor vs. ANL (paired samples) and FL vs. ANL (unpaired samples). Fold change (FC) was calculated as the ratio of mean expression between groups. P-values were adjusted with the Benjamini-Hochberg correction (BH) to control the false discovery rate. piRNAs were considered differentially expressed if they had an adjusted p-value \< 0.05 and FC \> 2. Oncofetal piRNAs were defined as those that were non-expressed in ANL but overexpressed in both tumor and fetal lung samples (BH p \< 0.05, FC \> 2).
+
+### Input dataset
+
+```{r}
+## piRNas EXCLUSIVE OF TUMORS AND FETAL BCCA Cohort
+BCCA_LUAD_2024_forDEanalysis <- read_excel("BCCA_LUAD_2024_forDEanalysis.xlsx")
+```
+
+### Identify sample groups
+
+```{r}
+fetal_samples <- grep("^Fetal_", colnames(BCCA_LUAD_2024_forDEanalysis), value = TRUE)
+tumor_samples <- grep("^Tumor_", colnames(BCCA_LUAD_2024_forDEanalysis), value = TRUE)
+anl_samples <- grep("^ANL_", colnames(BCCA_LUAD_2024_forDEanalysis), value = TRUE)
+```
+
+### Function to find expressed piRNAs (RPM ≥ 1 in at least 10% of the samples in each group Tumor, ANL and Fetal)
+
+```{r}
+find_expressed <- function(df, sample_cols) {
+  if (length(sample_cols) > 0) {
+    min_samples <- ceiling(0.10 * length(sample_cols))  # 10% of samples, rounded up
+    expressed <- df %>%
+      filter(rowSums(.[, sample_cols] >= 1) >= min_samples) %>%
+      pull(1)  # Get piRNA names
+    return(expressed)
+  } else {
+    return(character(0))  # Return empty if no samples in group
+  }
+}
+
+# Get expressed piRNAs in each group
+expressed_fetal <- find_expressed(BCCA_LUAD_2024_forDEanalysis, fetal_samples)
+expressed_tumor <- find_expressed(BCCA_LUAD_2024_forDEanalysis, tumor_samples)
+expressed_anl <- find_expressed(BCCA_LUAD_2024_forDEanalysis, anl_samples)
+
+# Create a named list
+expressed_list <- list(
+  "Fetal" = expressed_fetal,
+  "Tumor" = expressed_tumor,
+  "ANL" = expressed_anl
+)
+
+# Convert to a data frame for saving
+expressed_df <- stack(expressed_list)
+
+# Save as a .txt file
+write.table(expressed_df, "piRNAs_expressed_in_BCCA.txt", row.names = FALSE, col.names = c("piRNA", "Group"), quote = FALSE, sep = "\t")
+```
+
+### Differential Gene Expression Analysis
+
+```{r, warning=FALSE}
+## import
+All_couns_BCCA_Michelle <- BCCA_LUAD_2024_forDEanalysis
+
+# Ensure the first column contains piRNA names and set them as row names
+BCCA_LUAD_2024_forDEanalysis <- as.data.frame(BCCA_LUAD_2024_forDEanalysis) ## convert to a dataframe
+
+rownames(BCCA_LUAD_2024_forDEanalysis) <- BCCA_LUAD_2024_forDEanalysis$piRNAs
+data4 <- All_couns_BCCA_Michelle
+
+All_couns_BCCA_Michelle$piRNAs <- NULL  # Remove the first column after setting row names
+rownames(All_couns_BCCA_Michelle) <- data4$piRNAs
+
+```
+
+### piRNAs not expressed in ANL samples
+
+```{r Load_Libraries_5, warning=FALSE, message=FALSE}
+
+# Define the list of selected piRNAs ## those not expressed in ANL
+
+selected_piRNAs <- c("URS000000AA0C|piR-49039",
+                     "URS000003587D|piR-34789",
+                     "URS000009C105|piR-36244",
+                     "URS000013A1FE|piR-50446",
+                     "URS0000281D7C|piR-58356",
+                     "URS00002A521F|piR-58355",
+                     "URS00002BC69D|piR-34984",
+                     "URS000042C7F5|piR-51309",
+                     "URS00004359E4|piR-35953",
+                     "URS00004CF29B|piR-33404",
+                     "URS00004F3544|piR-58186",
+                     "URS00005DADAC|piR-36257",
+                     "URS00005FF09B|piR-36229",
+                     "URS000002D2B3|piR-33164",
+                     "URS000002DD41|piR-36026",
+                     "URS000006A033|piR-44717",
+                     "URS000006D277|piR-34377",
+                     "URS0000072763|piR-38183",
+                     "URS000008666A|piR-45884",
+                     "URS0000086DBC|piR-36711",
+                     "URS00000B577C|piR-38184",
+                     "URS00000B8F4E|piR-33519",
+                     "URS00000B9DA1|piR-31701",
+                     "URS00000C6189|piR-33879",
+                     "URS00000E6438|piR-59259",
+                     "URS000011FF8D|piR-34929",
+                     "URS000013DB6B|piR-44892",
+                     "URS0000144669|piR-43992",
+                     "URS0000177262|piR-38182",
+                     "URS00001DCFCF|piR-50725",
+                     "URS00001FACBA|piR-57862",
+                     "URS000020012B|piR-36706",
+                     "URS000028B672|piR-33856",
+                     "URS000029361F|piR-57861",
+                     "URS00002B6A6F|piR-36056",
+                     "URS00003097D9|piR-34420",
+                     "URS00003197D7|piR-34291",
+                     "URS0000337B2A|piR-35229",
+                     "URS0000338622|piR-60238",
+                     "URS00003491AD|piR-35466",
+                     "URS00003494FE|piR-35407",
+                     "URS00003C0FA7|piR-30840",
+                     "URS00003D4535|piR-61298",
+                     "URS00003E6FC6|piR-35414",
+                     "URS0000402639|piR-35548",
+                     "URS000040DC34|piR-35175",
+                     "URS000042EE02|piR-31080",
+                     "URS000044473B|piR-33520",
+                     "URS00004570F0|piR-36258",
+                     "URS000048B6AB|piR-44715",
+                     "URS00004EB0AA|piR-34736",
+                     "URS00004F59A9|piR-36705",
+                     "URS0000526FBD|piR-30926",
+                     "URS000054557D|piR-45883",
+                     "URS000054C938|piR-36272",
+                     "URS000054DC1D|piR-35174",
+                     "URS000057BC8B|piR-30652",
+                     "URS0000583064|piR-43997",
+                     "URS000059B99C|piR-33864",
+                     "URS00005C4FD3|piR-32374",
+                     "URS00005F0138|piR-59260",
+                     "URS000061F7FC|piR-44716",
+                     "URS00001940C2|piR-36236",
+                     "URS000021A073|piR-60758")
+  
+# Extract sample groups
+fetal_samples <- grep("^Fetal_", colnames(All_couns_BCCA_Michelle), value = TRUE)
+anl_samples <- grep("^ANL_", colnames(All_couns_BCCA_Michelle), value = TRUE)
+tumor_samples <- grep("^Tumor_", colnames(All_couns_BCCA_Michelle), value = TRUE)
+
+# Subset data to include only selected piRNAs
+filtered_data <- All_couns_BCCA_Michelle[rownames(All_couns_BCCA_Michelle) %in% selected_piRNAs, ]
+
+filtered_data <- as.data.frame(filtered_data)
+rownames(filtered_data) <- selected_piRNAs
+```
+
+### Wilcoxon Test and Fold Change Calculation
+
+```{r wilcox, message=FALSE, warning=FALSE}
+
+# Function to perform Wilcoxon test and compute fold change
+perform_wilcoxon <- function(df, group1, group2, paired = FALSE) {
+  results <- t(apply(df, 1, function(x) {
+    group1_values <- as.numeric(x[group1])
+    group2_values <- as.numeric(x[group2])
+    
+    test <- wilcox.test(group1_values, group2_values, paired = paired)
+    fc <- mean(group1_values) / mean(group2_values)  
+    
+    return(c(p_value = test$p.value, fc = fc))
+  }))
+  
+  results <- as.data.frame(results)
+  colnames(results) <- c("p_value", "fc")
+  results$adjusted_p_value <- p.adjust(results$p_value, method = "BH")
+  rownames(results) <- rownames(df)  # Ensure row names (piRNAs) are kept
+  
+  return(results)
+}
+
+# Perform differential expression analysis
+tumor_vs_anl <- perform_wilcoxon(filtered_data, tumor_samples, anl_samples, paired = T)
+fetal_vs_anl <- perform_wilcoxon(filtered_data, fetal_samples, anl_samples, paired = FALSE)
+
+# Convert rownames to a column (if not already)
+tumor_vs_anl <- tumor_vs_anl %>% 
+  tibble::rownames_to_column(var = "piRNA")
+
+fetal_vs_anl <- fetal_vs_anl %>% 
+  tibble::rownames_to_column(var = "piRNA")
+
+# Create a new column to mark differentially expressed piRNAs
+tumor_vs_anl <- tumor_vs_anl %>%
+  mutate(Differentially_Expressed = ifelse(adjusted_p_value < 0.05 & fc > 2, "Yes", "No"))
+
+fetal_vs_anl <- fetal_vs_anl %>%
+  mutate(Differentially_Expressed = ifelse(adjusted_p_value < 0.05 & fc > 2, "Yes", "No"))
+```
+
+### Tumor vs. ANL
+
+```{r, warning=FALSE}
+# Display the table (interactively within the R Markdown)
+datatable(tumor_vs_anl, options = list(pageLength = 10))  # This will display the table
+```
+
+### Fetal vs. ANL
+
+```{r, warning=FALSE}
+# Display the table (interactively within the R Markdown)
+datatable(fetal_vs_anl, options = list(pageLength = 10))  # This will display the table
+```
+
+### Show the piRNAs that are differentially expressed in both
+
+```{r, warning=FALSE}
+
+
+common_piRNAs <- inner_join(
+  tumor_vs_anl %>% filter(Differentially_Expressed == "Yes"),
+  fetal_vs_anl %>% filter(Differentially_Expressed == "Yes"),
+  by = "piRNA"
+)
+
+# Display the table interactively
+datatable(common_piRNAs, options = list(pageLength = 10))
+```
+
+### List of Oncofetal piRNAs in BCCA-LUAD
+
+```{r, warning=FALSE}
+# Extract only the piRNA names
+piRNA_names <- common_piRNAs$piRNA
+
+# Create a markdown-style bullet list
+piRNA_list <- paste("- ", piRNA_names, collapse = "\n")
+
+# Print it so R Markdown renders it as a proper list
+cat(piRNA_list)
+```
+
+### Visualization: Boxplot of Top Differentially Expressed oncofetalpiRNAs (top FC) (in Tumor vs ANL)
+
+```{r}
+# Define selected piRNAs for plotting
+# List of selected piRNAs
+selected_piRNAs_2 <- c("piR-35174",
+                     "piR-35175",
+                     "piR-50725",
+                     "piR-30926",
+                     "piR-33864",
+                     "piR-34929")
+
+  
+# Define y-axis limits for each piRNA
+y_limits <- list(
+  "piR-35174" = c(0, 40),
+  "piR-35175" = c(0, 50),
+  "piR-50725" = c(0, 50),
+  "piR-30926" = c(0, 40),
+  "piR-33864" = c(0, 50),
+  "piR-34929" = c(0, 50)
+  
+)
+
+# Convert rownames to a column
+All_couns_BCCA_Michelle_new <- tibble::rownames_to_column(All_couns_BCCA_Michelle, var = "piRNA")
+
+## column name to character
+colnames(All_couns_BCCA_Michelle_new) <- make.names(colnames(All_couns_BCCA_Michelle_new), unique = TRUE)
+
+# Define color scheme
+group_colors <- c("ANL" = "#1f77b4", "Tumor" = "purple", "Fetal" = "#8da0cb")
+
+
+# Reshape data from wide to long format
+long_data <- pivot_longer(All_couns_BCCA_Michelle_new, 
+                          cols = -piRNA, 
+                          names_to = "Sample", 
+                          values_to = "Expression")
+
+# Extract sample group information
+long_data <- long_data %>%
+  mutate(Group = case_when(
+    grepl("^Fetal_", Sample) ~ "Fetal",
+    grepl("^ANL_", Sample) ~ "ANL",
+    grepl("^Tumor_", Sample) ~ "Tumor",
+    TRUE ~ "Other"
+  ))
+
+# Remove everything before and including "|"
+long_data$piRNA <- sub(".*\\|", "", long_data$piRNA)
+
+# Create a combined bar plot with facets
+p3 <- ggplot(long_data %>% filter(piRNA %in% selected_piRNAs_2), aes(x = Group, y = Expression, fill = Group)) +
+  stat_summary(fun = mean, geom = "bar", position = "dodge", color = "black") +  # Bar plot with mean values
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.3, position = position_dodge(0.9)) +  # Error bars (SE)
+  theme_minimal() +
+  labs(x = "Sample Group", y = "Expression (RPM)") +
+  scale_fill_manual(values = group_colors) +
+  facet_wrap(~ piRNA, scales = "free_y") +  # Separate facets, independent y-axis limits
+  theme(
+    plot.title = element_text(size = 14, face = "bold"),
+    strip.text = element_text(size = 12, face = "bold")  # Adjust facet labels
+  )
+
+## view
+p3
+```
